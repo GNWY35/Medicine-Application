@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Allows plain HTTP (cleartext) only to the dev backend's LAN IP and the
+  Android emulator's host alias. Everything else keeps the platform default
+  (HTTPS-only). Update this IP if the dev machine's LAN address changes.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.232.243.157</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

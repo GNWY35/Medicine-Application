@@ -1,0 +1,52 @@
+name: my_medicine_app
+description: "Flutter Medicine App"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  firebase_core: ^2.32.0
+  firebase_auth: ^4.4.0
+  flutter_tts: ^3.5.3
+  shared_preferences: ^2.2.2
+  image_picker: ^1.1.1
+  url_launcher: ^6.2.5
+  google_fonts: ^6.2.1
+  permission_handler: ^12.0.1
+  cloud_firestore: 4.17.5
+  intl: ^0.20.2
+  image: ^4.0.17
+  http: ^1.2.2
+  path_provider: ^2.1.4
+  excel: ^4.0.2
+  camera: ^0.11.0
+  gal: ^2.3.0
+  flutter_skill: ^0.9.36
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  csv: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/data/meds.xlsm
+    - assets/images/amldac/
+
+plugin:
+  platforms:
+    android:
+      package: com.dexterous.flutterlocalnotifications
+      pluginClass: FlutterLocalNotificationsPlugin
