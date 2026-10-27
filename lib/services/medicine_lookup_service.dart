@@ -30,7 +30,8 @@ class MedicineLookupService {
   }
 
   Future<Map<String, MedItem>> _createExcelMap() async {
-    final allExcelMeds = await _repository.loadAll();
+    // รอสรรพคุณฉบับเต็มจาก API (หน้าผลสแกนใช้ fullIndication)
+    final allExcelMeds = await _repository.loadAllWithIndications();
     return {
       for (final med in allExcelMeds) med.name.toLowerCase(): med,
     };
@@ -44,14 +45,6 @@ class MedicineLookupService {
     );
   }
 
-  String _fallbackImagePath(String name) {
-    final override = kImageOverrides[name];
-    if (override != null) return override;
-
-    final sanitized = name
-        .trim()
-        .replaceAll(RegExp(r'\s+'), '_')
-        .replaceAll(RegExp(r'[\\/:"*?<>|]'), '_');
-    return '${MedRepository.imgDir}$sanitized.jpg';
-  }
+  String _fallbackImagePath(String name) =>
+      '${MedRepository.imgDir}${MedRepository.fileBase(name)}.jpg';
 }

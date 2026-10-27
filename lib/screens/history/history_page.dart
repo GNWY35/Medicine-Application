@@ -17,6 +17,8 @@ class HistoryPage extends StatefulWidget {
 }
 
 class _HistoryPageState extends State<HistoryPage> {
+  static final DateFormat _timeFormat = DateFormat('d MMM yyyy, HH:mm');
+
   late Future<List<HistoryRecord>> _future;
   DateTime? _selectedDate;
 
@@ -181,7 +183,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 final record = filtered[index];
                 return _HistoryCard(
                   record: record,
-                  timeText: DateFormat('d MMM yyyy, HH:mm').format(record.time),
+                  timeText: _timeFormat.format(record.time),
                   onTap: () => _openRecord(record),
                 );
               },

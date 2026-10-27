@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,26 @@ import 'package:gal/gal.dart';
 
 import '../../services/scan_api_service.dart';
 import 'scan_result_page.dart';
+
+/// Quality of the area inside the detection frame, computed natively.
+@immutable
+class _FrameQuality {
+  const _FrameQuality({
+    this.edgePixels = 0,
+    this.density = 0,
+    this.sharpness = 0,
+    this.isSharp = false,
+    this.tooDark = false,
+  });
+
+  final int edgePixels;
+
+  /// edgePixels / analysed pixels, 0..1.
+  final double density;
+  final double sharpness;
+  final bool isSharp;
+  final bool tooDark;
+}
 
 class RealtimeDetectionPage extends StatefulWidget {
   const RealtimeDetectionPage({super.key});
@@ -31,11 +52,24 @@ class _RealtimeDetectionPageState
   bool _capturing = false;
   String? _error;
 
-  /// ROI / Sharpness data
-  int edgePixels = 0;
-  double density = 0;
-  double sharpness = 0;
-  bool isSharp = false;
+  /// Detection frame as a fraction of the preview. Must match
+  /// CameraHandler.ROI_WIDTH_FRACTION / ROI_HEIGHT_FRACTION on Android.
+  /// The captured photo is cropped natively to this frame (+ CROP_MARGIN).
+  static const double _roiWidthFactor = 0.65;
+  static const double _roiHeightFactor = 0.40;
+
+  /// Upright size of the native preview buffer. MainActivity sets it to
+  /// 1280x720 in sensor orientation; keep the two in sync.
+  static const Size _previewPortraitSize = Size(720, 1280);
+
+  /// ROI / Sharpness data. Kept out of setState so the Texture does not
+  /// rebuild on every analysed frame.
+  final ValueNotifier<_FrameQuality> _quality =
+      ValueNotifier(const _FrameQuality());
+  StreamSubscription<dynamic>? _sharpnessSub;
+
+  final ValueNotifier<Offset?> _focusPoint = ValueNotifier(null);
+  Timer? _focusTimer;
 
   @override
   void initState() {
@@ -74,22 +108,18 @@ class _RealtimeDetectionPageState
 
   /// Listen realtime sharpness from native
   void _listenSharpness() {
-    _sharpnessStream.receiveBroadcastStream().listen(
+    _sharpnessSub?.cancel();
+    _sharpnessSub = _sharpnessStream.receiveBroadcastStream().listen(
       (event) {
         if (!mounted || event is! Map) return;
 
-        setState(() {
-          edgePixels =
-              (event['edgePixels'] as num?)?.toInt() ?? 0;
-
-          density =
-              (event['density'] as num?)?.toDouble() ?? 0;
-
-          sharpness =
-              (event['sharpness'] as num?)?.toDouble() ?? 0;
-
-          isSharp = event['isSharp'] as bool? ?? false;
-        });
+        _quality.value = _FrameQuality(
+          edgePixels: (event['edgePixels'] as num?)?.toInt() ?? 0,
+          density: (event['density'] as num?)?.toDouble() ?? 0,
+          sharpness: (event['sharpness'] as num?)?.toDouble() ?? 0,
+          isSharp: event['isSharp'] as bool? ?? false,
+          tooDark: event['tooDark'] as bool? ?? false,
+        );
       },
       onError: (e) {
         debugPrint('sharpness stream error: $e');
@@ -97,9 +127,30 @@ class _RealtimeDetectionPageState
     );
   }
 
+  /// Tap to focus/meter on a point. The preview box has the camera's exact
+  /// aspect ratio, so the tap maps 1:1 to the camera image.
+  Future<void> _onTapFocus(TapDownDetails details, Size viewSize) async {
+    final point = Offset(
+      (details.localPosition.dx / viewSize.width).clamp(0.0, 1.0),
+      (details.localPosition.dy / viewSize.height).clamp(0.0, 1.0),
+    );
+
+    _focusTimer?.cancel();
+    _focusPoint.value = details.localPosition;
+    _focusTimer = Timer(const Duration(milliseconds: 800), () {
+      _focusPoint.value = null;
+    });
+
+    try {
+      await _ch.invokeMethod('focusAt', {'x': point.dx, 'y': point.dy});
+    } catch (e) {
+      debugPrint('focusAt failed: $e');
+    }
+  }
+
   /// Capture image
   Future<void> _onCapture() async {
-    if (_capturing || !isSharp) return;
+    if (_capturing || !_quality.value.isSharp) return;
 
     setState(() {
       _capturing = true;
@@ -177,6 +228,10 @@ class _RealtimeDetectionPageState
 
   @override
   void dispose() {
+    _sharpnessSub?.cancel();
+    _focusTimer?.cancel();
+    _quality.dispose();
+    _focusPoint.dispose();
     _ch.invokeMethod('close').catchError((_) {});
     super.dispose();
   }
@@ -211,18 +266,6 @@ class _RealtimeDetectionPageState
       );
     }
 
-    final borderColor = isSharp
-        ? const Color(0xFF00E676)
-        : Colors.red;
-
-    final statusText = isSharp
-        ? 'ภาพชัด — พร้อมถ่าย'
-        : 'กรุณาอยู่ในที่ที่มีแสงเพียงพอ';
-
-    final statusColor = isSharp
-        ? const Color(0xFF00E676)
-        : Colors.redAccent;
-
     return Scaffold(
       backgroundColor: Colors.black,
 
@@ -255,37 +298,78 @@ class _RealtimeDetectionPageState
         children: [
           Expanded(
             child: Center(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  /// Native Camera Preview
-                  Texture(
-                    textureId: _textureId!,
-                  ),
-
-                  /// Detection Frame
-                  Align(
-                    alignment: Alignment.center,
-                    child: FractionallySizedBox(
-                      widthFactor: 0.65,
-                      heightFactor: 0.40,
-                      child: AnimatedContainer(
-                        duration:
-                            const Duration(milliseconds: 250),
-
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: borderColor,
-                            width: 3,
-                          ),
-
-                          borderRadius:
-                              BorderRadius.circular(10),
+              // Same aspect ratio as the camera buffer: no stretching, and the
+              // detection frame covers exactly the area analysed natively.
+              child: AspectRatio(
+                aspectRatio: _previewPortraitSize.aspectRatio,
+                child: LayoutBuilder(
+                  builder: (context, constraints) => GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (d) => _onTapFocus(d, constraints.biggest),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        /// Native Camera Preview
+                        Texture(
+                          textureId: _textureId!,
                         ),
-                      ),
+
+                        /// Detection Frame
+                        Align(
+                          alignment: Alignment.center,
+                          child: FractionallySizedBox(
+                            widthFactor: _roiWidthFactor,
+                            heightFactor: _roiHeightFactor,
+                            child: ValueListenableBuilder<_FrameQuality>(
+                              valueListenable: _quality,
+                              builder: (context, q, _) => AnimatedContainer(
+                                duration:
+                                    const Duration(milliseconds: 250),
+
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: q.isSharp
+                                        ? const Color(0xFF00E676)
+                                        : Colors.red,
+                                    width: 3,
+                                  ),
+
+                                  borderRadius:
+                                      BorderRadius.circular(10),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        /// Tap-to-focus indicator
+                        ValueListenableBuilder<Offset?>(
+                          valueListenable: _focusPoint,
+                          builder: (context, p, _) {
+                            if (p == null) return const SizedBox.shrink();
+                            return Positioned(
+                              left: p.dx - 24,
+                              top: p.dy - 24,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 48,
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
           ),
@@ -296,125 +380,146 @@ class _RealtimeDetectionPageState
             padding:
                 const EdgeInsets.fromLTRB(24, 16, 24, 32),
 
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment:
-                      MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      isSharp
-                          ? Icons.check_circle_rounded
-                          : Icons.cancel_rounded,
-
-                      color: statusColor,
-                      size: 18,
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    Text(
-                      statusText,
-                      style: GoogleFonts.kanit(
-                        color: statusColor,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 6),
-
-                Text(
-                  'Sharpness: ${sharpness.toStringAsFixed(1)}'
-                  '  ·  Density: ${density.toStringAsFixed(1)}%',
-
-                  style: GoogleFonts.kanit(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                GestureDetector(
-                  onTap: (!_capturing && isSharp)
-                      ? _onCapture
-                      : null,
-
-                  child: AnimatedContainer(
-                    duration:
-                        const Duration(milliseconds: 250),
-
-                    width: 76,
-                    height: 76,
-
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-
-                      color: _capturing
-                          ? Colors.white24
-                          : (isSharp
-                              ? const Color(0xFF00C853)
-                              : Colors.red.withValues(
-                                  alpha: 0.25,
-                                )),
-
-                      border: Border.all(
-                        color: isSharp
-                            ? const Color(0xFF00E676)
-                            : Colors.red,
-
-                        width: 3,
-                      ),
-
-                      boxShadow:
-                          isSharp && !_capturing
-                              ? [
-                                  BoxShadow(
-                                    color:
-                                        const Color(0xFF00E676)
-                                            .withValues(
-                                      alpha: 0.45,
-                                    ),
-
-                                    blurRadius: 18,
-                                    spreadRadius: 2,
-                                  ),
-                                ]
-                              : [],
-                    ),
-
-                    child: _capturing
-                        ? const Padding(
-                            padding: EdgeInsets.all(22),
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              valueColor:
-                                  AlwaysStoppedAnimation(
-                                Colors.white,
-                              ),
-                            ),
-                          )
-                        : Icon(
-                            Icons.camera_alt_rounded,
-
-                            color: isSharp
-                                ? Colors.white
-                                : Colors.red.withValues(
-                                    alpha: 0.5,
-                                  ),
-
-                            size: 32,
-                          ),
-                  ),
-                ),
-              ],
+            child: ValueListenableBuilder<_FrameQuality>(
+              valueListenable: _quality,
+              builder: (context, q, _) => _buildBottomPanel(q),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildBottomPanel(_FrameQuality q) {
+    final isSharp = q.isSharp;
+
+    final statusText = isSharp
+        ? 'ภาพชัด พร้อมถ่าย'
+        : (q.tooDark
+            ? 'กรุณาอยู่ในที่ที่มีแสงเพียงพอ'
+            : 'ถือกล้องให้นิ่ง วางยาเพียง 1 ชนิดไว้ในกรอบ');
+
+    final statusColor = isSharp
+        ? const Color(0xFF00E676)
+        : Colors.redAccent;
+
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment:
+              MainAxisAlignment.center,
+          children: [
+            Icon(
+              isSharp
+                  ? Icons.check_circle_rounded
+                  : Icons.cancel_rounded,
+
+              color: statusColor,
+              size: 18,
+            ),
+
+            const SizedBox(width: 8),
+
+            Flexible(
+              child: Text(
+                statusText,
+                style: GoogleFonts.kanit(
+                  color: statusColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 6),
+
+        Text(
+          'Sharpness: ${q.sharpness.toStringAsFixed(1)}'
+          '  ·  Density: ${(q.density * 100).toStringAsFixed(1)}%',
+
+          style: GoogleFonts.kanit(
+            color: Colors.white38,
+            fontSize: 11,
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        GestureDetector(
+          onTap: (!_capturing && isSharp)
+              ? _onCapture
+              : null,
+
+          child: AnimatedContainer(
+            duration:
+                const Duration(milliseconds: 250),
+
+            width: 76,
+            height: 76,
+
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+
+              color: _capturing
+                  ? Colors.white24
+                  : (isSharp
+                      ? const Color(0xFF00C853)
+                      : Colors.red.withValues(
+                          alpha: 0.25,
+                        )),
+
+              border: Border.all(
+                color: isSharp
+                    ? const Color(0xFF00E676)
+                    : Colors.red,
+
+                width: 3,
+              ),
+
+              boxShadow:
+                  isSharp && !_capturing
+                      ? [
+                          BoxShadow(
+                            color:
+                                const Color(0xFF00E676)
+                                    .withValues(
+                              alpha: 0.45,
+                            ),
+
+                            blurRadius: 18,
+                            spreadRadius: 2,
+                          ),
+                        ]
+                      : [],
+            ),
+
+            child: _capturing
+                ? const Padding(
+                    padding: EdgeInsets.all(22),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      valueColor:
+                          AlwaysStoppedAnimation(
+                        Colors.white,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.camera_alt_rounded,
+
+                    color: isSharp
+                        ? Colors.white
+                        : Colors.red.withValues(
+                            alpha: 0.5,
+                          ),
+
+                    size: 32,
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }

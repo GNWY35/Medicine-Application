@@ -2,6 +2,18 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'image_viewer_page.dart';
+
+/// Decode width for the scanned photo on the result page.
+const int kScanDisplayDecodeWidth = 1080;
+
+/// Downsampled provider for the scanned photo.
+///
+/// Every widget on the result page uses this provider, so they all share one
+/// image-cache entry and the full-resolution bitmap is never decoded.
+ImageProvider scanDisplayImage(File file) =>
+    ResizeImage(FileImage(file), width: kScanDisplayDecodeWidth);
+
 class ScanResultHeader extends StatelessWidget {
   const ScanResultHeader({
     super.key,
@@ -29,54 +41,71 @@ class ScanResultHeader extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             child: Stack(
               children: [
-                Image.file(
-                  imageFile!,
-                  width: double.infinity,
-                  height: 200,
-                  fit: BoxFit.cover,
+                ZoomableImage(
+                  heroTag: 'scan-source-image',
+                  semanticLabel: 'ดูรูปที่ใช้สแกนแบบขยาย',
+                  borderRadius: BorderRadius.circular(20),
+                  thumbnail: Image(
+                    image: scanDisplayImage(imageFile!),
+                    width: double.infinity,
+                    height: 200,
+                    fit: BoxFit.cover,
+                  ),
+                  fullImageBuilder: (_) => Image(
+                    image: scanDisplayImage(imageFile!),
+                    fit: BoxFit.contain,
+                    errorBuilder: ImageViewerPage.errorBuilder,
+                  ),
                 ),
                 // gradient overlay ด้านล่าง
                 Positioned(
-                  bottom: 0, left: 0, right: 0,
-                  child: Container(
-                    height: 60,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.35),
-                        ],
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: Container(
+                      height: 60,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withValues(alpha: 0.35),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
                 // badge "รูปที่ใช้สแกน"
                 Positioned(
-                  bottom: 10, left: 12,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.image_rounded,
-                            color: Colors.white70, size: 13),
-                        const SizedBox(width: 5),
-                        Text(
-                          'รูปที่ใช้สแกน',
-                          style: GoogleFonts.kanit(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
+                  bottom: 10,
+                  left: 12,
+                  child: IgnorePointer(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.image_rounded,
+                              color: Colors.white70, size: 13),
+                          const SizedBox(width: 5),
+                          Text(
+                            'รูปที่ใช้สแกน',
+                            style: GoogleFonts.kanit(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),

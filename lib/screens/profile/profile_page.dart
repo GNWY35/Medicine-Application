@@ -120,7 +120,12 @@ Future<void> _loadUserData() async {
 
     _isPickingImage = true;
     try {
-      final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
       if (!mounted || picked == null) return;
       setState(() => _imageFile = File(picked.path));
     } on PlatformException catch (_) {

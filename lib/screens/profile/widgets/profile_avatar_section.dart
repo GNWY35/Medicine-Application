@@ -30,7 +30,10 @@ class ProfileAvatarSection extends StatelessWidget {
             onTap: onTap,
             child: CircleAvatar(
               radius: 60,
-              backgroundImage: imageFile != null ? FileImage(imageFile!) : null,
+              // avatar แสดงที่ 120dp: decode แค่ ~2x แทนขนาดเต็มของรูป
+              backgroundImage: imageFile != null
+                  ? ResizeImage(FileImage(imageFile!), width: 240)
+                  : null,
               backgroundColor: const Color(0xFF10B981).withValues(alpha: 0.15),
               child: imageFile == null
                   ? const Icon(

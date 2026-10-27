@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../models/med_item.dart';
+import 'image_viewer_page.dart';
 
 class MedicineResultCard extends StatelessWidget {
   const MedicineResultCard({
     super.key,
     required this.medItem,
+    required this.catalogHeroTag,
     required this.leading,
     required this.selectedListenable,
     required this.expandedListenable,
@@ -18,6 +20,9 @@ class MedicineResultCard extends StatelessWidget {
   });
 
   final MedItem medItem;
+
+  /// Hero tag for the catalog image; must be unique within the route.
+  final Object catalogHeroTag;
   final Widget leading;
   final ValueListenable<bool> selectedListenable;
   final ValueListenable<bool> expandedListenable;
@@ -82,13 +87,23 @@ class MedicineResultCard extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       ClipRRect(
-                        child: Image.asset(
-                          medItem.imagePath,
-                          width: 72,
-                          height: 72,
-                          fit: BoxFit.cover,
-                          cacheWidth: 210, // ปรับตรงนี้ ขนาดรูปย่อของยาในหน้าประวัติ
-                          cacheHeight: 150, // ปรับตรงนี้ ขนาดรูปย่อของยาในหน้าประวัติ - ในกรณีเปลี่ยนรูปใหม่ แล้วขนาดเปลี่ยนไป อาจจะทำให้ดูไม่สวยให้ปรับตรงนี้
+                        child: ZoomableImage(
+                          heroTag: catalogHeroTag,
+                          semanticLabel:
+                              'ดูรูปตัวอย่างยา ${medItem.brandName} แบบขยาย',
+                          thumbnail: Image.asset(
+                            medItem.imagePath,
+                            width: 72,
+                            height: 72,
+                            fit: BoxFit.cover,
+                            cacheWidth: 210, // ปรับตรงนี้ ขนาดรูปย่อของยาในหน้าประวัติ
+                          ),
+                          fullImageBuilder: (context) => Image.asset(
+                            medItem.imagePath,
+                            fit: BoxFit.contain,
+                            cacheWidth: ImageViewerPage.cacheWidthFor(context),
+                            errorBuilder: ImageViewerPage.errorBuilder,
+                          ),
                         ),
                       ),
                     ],

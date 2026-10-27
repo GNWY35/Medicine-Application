@@ -1,6 +1,6 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
@@ -10,6 +10,7 @@ import '../../models/med_item.dart';
 import '../../services/history_service.dart';
 import '../../services/medicine_image_service.dart';
 import '../../services/medicine_lookup_service.dart';
+import 'widgets/image_viewer_page.dart';
 import 'widgets/medicine_result_card.dart';
 import 'widgets/scan_result_header.dart';
 
@@ -42,7 +43,7 @@ class _ScanResultPageState extends State<ScanResultPage> {
   late final List<ValueNotifier<bool>> _selectedStates;
   late final List<ValueNotifier<bool>> _expandedStates;
   late final Future<List<MedItem>> _medsFuture;
-  Future<ImageInfo>? _imageInfoFuture;
+  Future<Size?>? _imageSizeFuture;
   bool _historySaved = false;
 
   @override
@@ -59,8 +60,8 @@ class _ScanResultPageState extends State<ScanResultPage> {
     _selectedCount.value =
         widget.autosave && !widget.isFromHistory ? _selectedStates.length : 0;
     _medsFuture = _lookupService.findMedicines(widget.detectedNames);
-    _imageInfoFuture =
-        widget.imageFile == null ? null : _resolveImageInfo(widget.imageFile!);
+    _imageSizeFuture =
+        widget.imageFile == null ? null : _readImageSize(widget.imageFile!);
 
     if (widget.autosave &&
         !widget.isFromHistory &&
@@ -83,15 +84,26 @@ class _ScanResultPageState extends State<ScanResultPage> {
     _showSuccessSnackBar();
   }
 
-  Future<ImageInfo> _resolveImageInfo(File file) async {
-    final completer = Completer<ImageInfo>();
-    final image = Image.file(file);
-
-    image.image.resolve(const ImageConfiguration()).addListener(
-          ImageStreamListener((info, _) => completer.complete(info)),
-        );
-
-    return completer.future;
+  /// Reads the original pixel size from the file header without decoding
+  /// pixels. Returns null when the file cannot be read; callers then fall back
+  /// to the catalog image.
+  Future<Size?> _readImageSize(File file) async {
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    try {
+      buffer = await ui.ImmutableBuffer.fromFilePath(file.path);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      return Size(
+        descriptor.width.toDouble(),
+        descriptor.height.toDouble(),
+      );
+    } catch (error) {
+      debugPrint('Cannot read scanned image size: $error');
+      return null;
+    } finally {
+      descriptor?.dispose();
+      buffer?.dispose();
+    }
   }
 
   List<String> _selectedNames(List<MedItem> meds) {
@@ -143,27 +155,18 @@ class _ScanResultPageState extends State<ScanResultPage> {
       return <String?>[];
     }
 
-    final selectedIndexes = <int>[];
+    final bboxes = <List<double>?>[];
+    final names = <String>[];
     for (int i = 0; i < widget.detectedNames.length; i++) {
       if (widget.autosave || _selectedStates[i].value) {
-        selectedIndexes.add(i);
+        bboxes.add(
+          widget.detectedBboxes.length > i ? widget.detectedBboxes[i] : null,
+        );
+        names.add(widget.detectedNames[i]);
       }
     }
 
-    return Future.wait(
-      selectedIndexes.map((index) async {
-        final bbox = widget.detectedBboxes.length > index
-            ? widget.detectedBboxes[index]
-            : null;
-        if (bbox == null || bbox.length != 4) return null;
-
-        return cropAndSaveMedicineImage(
-          widget.imageFile!,
-          bbox,
-          widget.detectedNames[index],
-        );
-      }),
-    );
+    return cropAndSaveMedicineImages(widget.imageFile!, bboxes, names);
   }
 
   void _showSuccessSnackBar() {
@@ -178,14 +181,19 @@ class _ScanResultPageState extends State<ScanResultPage> {
     );
   }
 
+  /// Shows the bbox region of the scanned photo as a square.
+  ///
+  /// The bbox is in original-pixel coordinates. The downsampled decode is
+  /// stretched back to [originalSize] in layout, so the crop math stays in
+  /// original pixels and FittedBox scales the result to [outputSize].
   Widget _buildCroppedImage(
     File imageFile,
     double outputSize,
     List<double> bbox,
-    ImageInfo info,
+    Size originalSize,
   ) {
-    final imgW = info.image.width.toDouble();
-    final imgH = info.image.height.toDouble();
+    final imgW = originalSize.width;
+    final imgH = originalSize.height;
     final x1 = bbox[0].clamp(0, imgW);
     final y1 = bbox[1].clamp(0, imgH);
     final x2 = bbox[2].clamp(0, imgW);
@@ -200,8 +208,8 @@ class _ScanResultPageState extends State<ScanResultPage> {
     double newX1 = centerX - squareSize / 2;
     double newY1 = centerY - squareSize / 2;
 
-    newX1 = newX1.clamp(0, imgW - squareSize);
-    newY1 = newY1.clamp(0, imgH - squareSize);
+    newX1 = newX1.clamp(0, math.max(0.0, imgW - squareSize));
+    newY1 = newY1.clamp(0, math.max(0.0, imgH - squareSize));
 
     return SizedBox(
       width: outputSize,
@@ -218,11 +226,11 @@ class _ScanResultPageState extends State<ScanResultPage> {
                 Positioned(
                   left: -newX1,
                   top: -newY1,
-                  child: Image.file(
-                    imageFile,
+                  child: Image(
+                    image: scanDisplayImage(imageFile),
                     width: imgW,
                     height: imgH,
-                    fit: BoxFit.none,
+                    fit: BoxFit.fill,
                   ),
                 ),
               ],
@@ -236,41 +244,78 @@ class _ScanResultPageState extends State<ScanResultPage> {
   Widget _buildLeadingImage(
     List<MedItem> meds,
     int index,
-    ImageInfo? imageInfo,
+    Size? imageSize,
   ) {
+    final heroTag = 'scan-leading-$index';
+    final scannedLabel = 'ดูรูปยา ${meds[index].brandName} ที่สแกนได้แบบขยาย';
+
     if (widget.isFromHistory &&
         widget.cropImagePaths != null &&
         widget.cropImagePaths!.length > index &&
         widget.cropImagePaths![index] != null) {
-      return Image.file(
-        File(widget.cropImagePaths![index]!),
+      final cropFile = File(widget.cropImagePaths![index]!);
+      return ZoomableImage(
+        heroTag: heroTag,
+        semanticLabel: scannedLabel,
+        thumbnail: Image.file(
+          cropFile,
+          width: 72,
+          height: 72,
+          fit: BoxFit.cover,
+          cacheWidth: 144,
+          cacheHeight: 144,
+        ),
+        fullImageBuilder: (context) => Image.file(
+          cropFile,
+          fit: BoxFit.contain,
+          cacheWidth: ImageViewerPage.cacheWidthFor(context),
+          errorBuilder: ImageViewerPage.errorBuilder,
+        ),
+      );
+    }
+
+    if (widget.imageFile != null &&
+        imageSize != null &&
+        widget.detectedBboxes.length > index &&
+        widget.detectedBboxes[index].length == 4) {
+      final imageFile = widget.imageFile!;
+      final bbox = widget.detectedBboxes[index];
+      return ZoomableImage(
+        heroTag: heroTag,
+        semanticLabel: scannedLabel,
+        thumbnail: _buildCroppedImage(imageFile, 72, bbox, imageSize),
+        // Same provider as the thumbnail, so no second decode.
+        fullImageBuilder: (_) => LayoutBuilder(
+          builder: (context, constraints) => Center(
+            child: _buildCroppedImage(
+              imageFile,
+              math.min(constraints.maxWidth, constraints.maxHeight),
+              bbox,
+              imageSize,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final assetPath = meds[index].imagePath;
+    return ZoomableImage(
+      heroTag: heroTag,
+      semanticLabel: 'ดูรูปตัวอย่างยา ${meds[index].brandName} แบบขยาย',
+      thumbnail: Image.asset(
+        assetPath,
         width: 72,
         height: 72,
         fit: BoxFit.cover,
         cacheWidth: 144,
         cacheHeight: 144,
-      );
-    }
-
-    if (widget.imageFile != null &&
-        imageInfo != null &&
-        widget.detectedBboxes.length > index &&
-        widget.detectedBboxes[index].length == 4) {
-      return _buildCroppedImage(
-        widget.imageFile!,
-        72,
-        widget.detectedBboxes[index],
-        imageInfo,
-      );
-    }
-
-    return Image.asset(
-      meds[index].imagePath,
-      width: 72,
-      height: 72,
-      fit: BoxFit.cover,
-      cacheWidth: 144,
-      cacheHeight: 144,
+      ),
+      fullImageBuilder: (context) => Image.asset(
+        assetPath,
+        fit: BoxFit.contain,
+        cacheWidth: ImageViewerPage.cacheWidthFor(context),
+        errorBuilder: ImageViewerPage.errorBuilder,
+      ),
     );
   }
 
@@ -325,10 +370,10 @@ class _ScanResultPageState extends State<ScanResultPage> {
           ),
           body: Padding(
             padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-            child: FutureBuilder<ImageInfo?>(
-              future: _imageInfoFuture,
+            child: FutureBuilder<Size?>(
+              future: _imageSizeFuture,
               builder: (context, imageSnapshot) {
-                final imageInfo = imageSnapshot.data;
+                final imageSize = imageSnapshot.data;
                 return ListView.builder(
                   scrollCacheExtent: const ScrollCacheExtent.pixels(600),
                   itemCount: meds.length + 1,
@@ -347,10 +392,11 @@ class _ScanResultPageState extends State<ScanResultPage> {
                     final medIndex = index - 1;
                     return MedicineResultCard(
                       medItem: meds[medIndex],
+                      catalogHeroTag: 'scan-catalog-$medIndex',
                       leading: _buildLeadingImage(
                         meds,
                         medIndex,
-                        imageInfo,
+                        imageSize,
                       ),
                       selectedListenable: _selectedStates[medIndex],
                       expandedListenable: _expandedStates[medIndex],

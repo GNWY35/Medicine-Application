@@ -20,7 +20,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _bootstrap() async {
     await Future.wait<void>([
-      Future<void>.delayed(const Duration(seconds: 2)),
+      Future<void>.delayed(const Duration(milliseconds: 800)),
       AppPreloadService.warmUp(),
     ]);
 
@@ -80,7 +80,8 @@ class _SplashScreenState extends State<SplashScreen> {
                 ),
                 const SizedBox(height: 40),
                 Text(
-                  'MyMedicine',
+                  'Medi-Ident AI',
+                  textAlign: TextAlign.center,
                   style: GoogleFonts.kanit(
                     fontSize: 48,
                     fontWeight: FontWeight.w800,

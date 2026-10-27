@@ -53,7 +53,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  List<MedItem> get _filteredMedicines {
+  List<MedItem> _computeFilteredMedicines() {
     final query = _searchController.text.trim().toLowerCase();
     var filtered = _allMedicines.where((medicine) {
       final text = '${medicine.name} ${medicine.description}'.toLowerCase();
@@ -95,6 +95,7 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final filteredMedicines = _computeFilteredMedicines();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF9FAFB),
@@ -148,7 +149,7 @@ class _HomePageState extends State<HomePage> {
               const Expanded(
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (_filteredMedicines.isEmpty)
+            else if (filteredMedicines.isEmpty)
               Expanded(
                 child: Center(
                   child: Column(
@@ -187,9 +188,9 @@ class _HomePageState extends State<HomePage> {
                       crossAxisSpacing: 16,
                       childAspectRatio: 0.7,
                     ),
-                    itemCount: _filteredMedicines.length,
+                    itemCount: filteredMedicines.length,
                     itemBuilder: (context, index) {
-                      final medicine = _filteredMedicines[index];
+                      final medicine = filteredMedicines[index];
                       return MedicineGridCard(
                         item: medicine,
                         onTap: () => _openDetail(medicine),

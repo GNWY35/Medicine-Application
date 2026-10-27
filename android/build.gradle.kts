@@ -32,7 +32,8 @@ subprojects {
 // it's present at runtime. javac needs the actual class for type-annotation
 // processing on SurfaceRequest, so compilation fails without this.
 gradle.projectsEvaluated {
-    project(":camera_android_camerax").dependencies.add(
+    // The camera plugin was removed from pubspec; keep this only if it returns.
+    findProject(":camera_android_camerax")?.dependencies?.add(
         "implementation",
         "androidx.concurrent:concurrent-futures:1.2.0",
     )

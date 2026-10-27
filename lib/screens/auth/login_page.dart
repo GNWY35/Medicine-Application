@@ -131,7 +131,8 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'MyMedicine',
+                    'Medi-Ident AI',
+                    textAlign: TextAlign.center,
                     style: GoogleFonts.kanit(
                       fontSize: 32,
                       fontWeight: FontWeight.w800,

@@ -1,19 +1,15 @@
 // ไฟล์: lib/main.dart
-// ✅ แอป MyMedicine (Excel -> รูปภาพจาก assets/images/amldac/<Name>.jpg)
-// • ไม่ใช้คอลัมน์ "รูปยา" ในไฟล์ Excel
-// • จำกัดรายการสูงสุด 36 รายการ
-// • ใช้นามสกุลไฟล์ .jpg เท่านั้น (ไม่ทำการเดานามสกุล)
-// • มีฟีเจอร์อ่านออกเสียง (TTS) โดยใช้แพ็กเกจ flutter_tts
-// • หน้าแรก: การ์ดยา (รูป + ชื่อ + สรรพคุณ) และ BottomSheet สำหรับรายละเอียด
-// • หน้าสแกน (จำลอง): ถ่ายรูป/เลือกจากแกลเลอรี และพิมพ์ชื่อยา → แสดงผลลัพธ์
+// แอป Medi-Ident AI: จุดเริ่มต้นของแอป (theme, locale) แล้วเปิด SplashScreen
+// • ข้อมูลยามาจาก assets/data/meds.xlsm (สูงสุด 36 รายการ) รูปจาก
+//   assets/images/amldac/<Name>.jpg และเสริมสรรพคุณฉบับเต็มจาก API
+// • หน้าสแกน: ถ่ายรูป/เลือกจากแกลเลอรี ส่งให้ API ตรวจจับยา แล้วแสดงผล
 // • ประวัติการสแกนเก็บไว้ใน SharedPreferences
-// • โปรไฟล์ผู้ใช้งานสามารถเปลี่ยนชื่อและเลือกรูปโปรไฟล์ได้ (local)
+// • โปรไฟล์ผู้ใช้งานเปลี่ยนชื่อและรูปโปรไฟล์ได้ (เก็บในเครื่อง)
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:google_fonts/google_fonts.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_skill/flutter_skill.dart';
 import 'screens/splash_screen.dart';
@@ -21,7 +17,6 @@ import 'screens/splash_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (kDebugMode) FlutterSkillBinding.ensureInitialized();
-  await Firebase.initializeApp();
   runApp(const MyApp());
 }
 
@@ -31,7 +26,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'MyMedicine',
+      title: 'Medi-Ident AI',
       debugShowCheckedModeBanner: false,
       supportedLocales: const [
         Locale('th', 'TH'),

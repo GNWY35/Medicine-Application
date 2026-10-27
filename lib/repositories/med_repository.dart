@@ -7,51 +7,71 @@ import 'package:http/http.dart' as http;
 import '../models/med_item.dart';
 import '../services/api_config.dart';
 
-const Map<String, String> kImageOverrides = <String, String>{};
-
 /// ที่เก็บข้อมูลสำหรับการโหลดและแคชข้อมูลยา
-/// พยายามโหลดจาก API ก่อน หากล้มเหลว (ไม่มีเน็ต/เซิร์ฟเวอร์ล่ม) จะ fallback
-/// ไปโหลดจากไฟล์ Excel ที่แนบมากับแอปแทน
+/// ใช้ไฟล์ Excel ที่แนบมากับแอปเป็นฐานเสมอ แล้วเสริมสรรพคุณฉบับเต็มจาก API
+/// ในเบื้องหลัง (ไม่บล็อกการแสดงผล)
 class MedRepository {
   static const String excelAsset = 'assets/data/meds.xlsm';
   static const String imgDir = 'assets/images/amldac/';
   static const String medicinesEndpoint = '$kApiBaseUrl/medicines/';
 
+  /// ผลล่าสุดที่มี: รายการจาก Excel และถูกแทนด้วยรายการที่เสริม
+  /// fullIndication แล้วเมื่อ API ตอบกลับ
   static List<MedItem>? _cache;
+  static Future<List<MedItem>>? _excelFuture;
+  static Future<List<MedItem>>? _enrichFuture;
 
   /// แปลงชื่อเป็นชื่อไฟล์ฐาน: เว้นวรรค -> "_" อักขระต้องห้าม -> "_"
-  String _fileBase(String name) {
+  static String fileBase(String name) {
     var s = name.trim();
     s = s.replaceAll(RegExp(r'\s+'), '_');
     s = s.replaceAll(RegExp(r'[\\/:"*?<>|]'), '_');
     return s;
   }
 
-  /// โหลดยาทั้งหมด: ใช้ Excel เป็นฐานเสมอ (ชื่อ/สรรพคุณย่อ/รูป) เพราะเป็นไฟล์
-  /// ที่แนบมากับแอป โหลดได้ทันทีแม้ไม่มีเน็ต จากนั้นพยายามเสริมสรรพคุณฉบับเต็ม
-  /// จาก API (DB) เข้าไปในรายการเดิม หาก API ใช้ไม่ได้ก็ไม่เป็นไร - ปล่อยให้
-  /// fullIndication เป็น null (จะ fallback ไปใช้สรรพคุณย่อตอนแสดงผล)
-  /// (มีแคชแบบ static เหมือนเดิม)
+  /// โหลดยาทั้งหมดจาก Excel แล้วคืนค่าทันที ส่วนสรรพคุณฉบับเต็มจาก API
+  /// จะถูกเสริมในเบื้องหลัง เรียกครั้งถัดไปจะได้รายการที่เสริมแล้ว (ถ้าเสร็จ)
+  /// หากต้องการรอผลจาก API ให้ใช้ [loadAllWithIndications]
   Future<List<MedItem>> loadAll() async {
     if (_cache != null) return _cache!;
+    final base = await _loadExcelOnce();
+    _startEnrichment(base);
+    return _cache ?? base;
+  }
 
-    final base = await _loadFromExcel();
+  /// เหมือน [loadAll] แต่รอให้การเสริม fullIndication จาก API เสร็จก่อน
+  /// (API ล้มเหลว = คืนรายการจาก Excel โดย fullIndication เป็น null)
+  Future<List<MedItem>> loadAllWithIndications() async {
+    final base = await _loadExcelOnce();
+    return _startEnrichment(base);
+  }
+
+  Future<List<MedItem>> _loadExcelOnce() {
+    return _excelFuture ??= _loadFromExcel().then((items) {
+      _cache ??= items;
+      return items;
+    }, onError: (Object error, StackTrace stack) {
+      _excelFuture = null; // ให้ลองใหม่ได้ในครั้งถัดไป
+      return Future<List<MedItem>>.error(error, stack);
+    });
+  }
+
+  Future<List<MedItem>> _startEnrichment(List<MedItem> base) {
+    return _enrichFuture ??= _enrich(base);
+  }
+
+  Future<List<MedItem>> _enrich(List<MedItem> base) async {
     final indicationByName = await _loadFullIndicationsByBrandName();
+    if (indicationByName == null) return base;
 
-    final merged = indicationByName == null
-        ? base
-        : base
-            .map((med) => MedItem(
-                  name: med.name,
-                  description: med.description,
-                  imagePath: med.imagePath,
-                  fullIndication: _matchFullIndication(
-                    med.name,
-                    indicationByName,
-                  ),
-                ))
-            .toList();
-
+    final merged = base
+        .map((med) => MedItem(
+              name: med.name,
+              description: med.description,
+              imagePath: med.imagePath,
+              fullIndication: _matchFullIndication(med.name, indicationByName),
+            ))
+        .toList();
     return _cache = merged;
   }
 
@@ -100,41 +120,43 @@ class MedRepository {
     }
   }
 
-  /// โหลดยาทั้งหมดจากไฟล์ Excel (fallback แบบเดิม)
+  /// โหลดยาทั้งหมดจากไฟล์ Excel โดย parse ใน isolate แยก (ไฟล์ใหญ่ ถ้า parse
+  /// บน UI isolate จะทำให้หน้าจอค้างบนเครื่องสเปกต่ำ)
   Future<List<MedItem>> _loadFromExcel() async {
     final bytes = (await rootBundle.load(excelAsset)).buffer.asUint8List();
-    final book = xlsx.Excel.decodeBytes(bytes);
-    final sheet = book.tables.values.first;
-
-    // แยกแถวส่วนหัว
-    final headers = sheet
-        .row(0)
-        .map((c) => (c?.value?.toString() ?? '').trim())
-        .toList();
-    
-    int idxOf(String h) =>
-        headers.indexWhere((x) => x.toLowerCase() == h.toLowerCase());
-
-    final idxName = idxOf('ชื่อยาความดันโลหิตสูง(ยี่ห้อยา_ชื่อยา)');
-    final idxDesc = idxOf('สรรพคุณ');
-
-    final out = <MedItem>[];
-    for (int r = 1; r < sheet.maxRows && out.length < 36; r++) {
-      final row = sheet.row(r);
-      String cell(int i) => (i >= 0 && i < row.length && row[i] != null)
-          ? row[i]!.value.toString().trim()
-          : '';
-
-      final name = cell(idxName);
-      final desc = cell(idxDesc);
-      if (name.isEmpty && desc.isEmpty) continue;
-
-      final base = _fileBase(name);
-      final path = kImageOverrides[name] ?? '$imgDir$base.jpg';
-
-      out.add(MedItem(name: name, description: desc, imagePath: path));
-    }
-
-    return out;
+    return compute(_parseMedsExcel, bytes);
   }
+}
+
+/// ต้องเป็นฟังก์ชัน top-level เพื่อส่งให้ [compute]
+List<MedItem> _parseMedsExcel(Uint8List bytes) {
+  final book = xlsx.Excel.decodeBytes(bytes);
+  final sheet = book.tables.values.first;
+
+  // แยกแถวส่วนหัว
+  final headers =
+      sheet.row(0).map((c) => (c?.value?.toString() ?? '').trim()).toList();
+
+  int idxOf(String h) =>
+      headers.indexWhere((x) => x.toLowerCase() == h.toLowerCase());
+
+  final idxName = idxOf('ชื่อยาความดันโลหิตสูง(ยี่ห้อยา_ชื่อยา)');
+  final idxDesc = idxOf('สรรพคุณ');
+
+  final out = <MedItem>[];
+  for (int r = 1; r < sheet.maxRows && out.length < 36; r++) {
+    final row = sheet.row(r);
+    String cell(int i) => (i >= 0 && i < row.length && row[i] != null)
+        ? row[i]!.value.toString().trim()
+        : '';
+
+    final name = cell(idxName);
+    final desc = cell(idxDesc);
+    if (name.isEmpty && desc.isEmpty) continue;
+
+    final path = '${MedRepository.imgDir}${MedRepository.fileBase(name)}.jpg';
+    out.add(MedItem(name: name, description: desc, imagePath: path));
+  }
+
+  return out;
 }

@@ -21,13 +21,17 @@ class _ScanMedicinePageState extends State<ScanMedicinePage> {
   static const String _autosavePreferenceKey = 'scan_autosave_enabled';
 
   final ImagePicker _picker = ImagePicker();
-  final TextEditingController _nameController = TextEditingController();
 
   File? _image;
   bool _autosaveEnabled = true;
+  bool _isAnalyzing = false;
 
   Future<void> _pickGallery() async {
-    final image = await _picker.pickImage(source: ImageSource.gallery);
+    final image = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 2048,
+      imageQuality: 85,
+    );
     if (!mounted || image == null) return;
     setState(() => _image = File(image.path));
   }
@@ -44,30 +48,24 @@ class _ScanMedicinePageState extends State<ScanMedicinePage> {
       return;
     }
 
-    final resultPath = await Navigator.push<String?>(
+    await Navigator.push<void>(
       context,
       MaterialPageRoute(builder: (_) => const RealtimeDetectionPage()),
     );
-
-    // Realtime Scan ส่ง path รูปที่ถ่ายกลับมา → ตั้งเป็นรูป preview
-    if (!mounted || resultPath == null || resultPath.isEmpty) return;
-    setState(() => _image = File(resultPath));
   }
 
   Future<void> _goToResult() async {
+  if (_isAnalyzing) return;
   if (_image == null) {
     _showSnackBar('โปรดถ่ายรูปหรือเลือกภาพยาก่อนดูผลลัพธ์');
     return;
   }
 
-  final result = await analyzeImage(
-    _image!,
-    fallbackName: _nameController.text.trim().isEmpty
-        ? 'Unknown'
-        : _nameController.text.trim(),
-  );
+  setState(() => _isAnalyzing = true);
+  final result = await analyzeImage(_image!);
 
   if (!mounted) return;
+  setState(() => _isAnalyzing = false);
 
   if (!result.isSuccess) {
     _showSnackBar(result.errorMessage!);
@@ -112,12 +110,6 @@ class _ScanMedicinePageState extends State<ScanMedicinePage> {
         content: Text(message, style: GoogleFonts.kanit()),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
   }
 
   @override
@@ -189,7 +181,10 @@ class _ScanMedicinePageState extends State<ScanMedicinePage> {
                     onChanged: _setAutosaveEnabled,
                   ),
                   const SizedBox(height: 16),
-                  _AnalyzeButton(onPressed: _goToResult),
+                  _AnalyzeButton(
+                    onPressed: _goToResult,
+                    isLoading: _isAnalyzing,
+                  ),
                   const SizedBox(height: 40),
                 ],
               ),
@@ -450,9 +445,10 @@ class _SelectedImagePreview extends StatelessWidget {
 }
 
 class _AnalyzeButton extends StatelessWidget {
-  const _AnalyzeButton({required this.onPressed});
+  const _AnalyzeButton({required this.onPressed, required this.isLoading});
 
   final VoidCallback onPressed;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -474,20 +470,39 @@ class _AnalyzeButton extends StatelessWidget {
           ],
         ),
         child: FilledButton(
-          onPressed: onPressed,
+          onPressed: isLoading ? null : onPressed,
           style: FilledButton.styleFrom(
             backgroundColor: Colors.transparent,
+            disabledBackgroundColor: Colors.transparent,
+            foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white,
             shadowColor: Colors.transparent,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
           ),
-          child: Text(
-            'วิเคราะห์ภาพยา',
-            style: GoogleFonts.kanit(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isLoading) ...[
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              Text(
+                isLoading ? 'กำลังวิเคราะห์ภาพ...' : 'วิเคราะห์ภาพยา',
+                style: GoogleFonts.kanit(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ),
       ),

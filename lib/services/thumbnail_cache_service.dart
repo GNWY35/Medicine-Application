@@ -8,6 +8,16 @@ import 'package:path_provider/path_provider.dart';
 class ThumbnailCacheService {
   static final Map<String, Future<String?>> _cache = {};
 
+  /// งาน decode ล่าสุดในคิว: สร้าง thumbnail ทีละรูป เพื่อไม่ให้ทุกแถวที่มองเห็น
+  /// เปิด isolate decode รูปเต็มพร้อมกัน (หน่วยความจำ/CPU บนเครื่องสเปกต่ำ)
+  static Future<void> _queueTail = Future<void>.value();
+
+  static Future<T> _enqueue<T>(Future<T> Function() task) {
+    final result = _queueTail.then((_) => task());
+    _queueTail = result.then<void>((_) {}, onError: (_) {});
+    return result;
+  }
+
   static Future<String?> getOrCreateThumbnail(
     String sourcePath, {
     int size = 120,
@@ -17,6 +27,27 @@ class ThumbnailCacheService {
       key,
       () => _createThumbnail(sourcePath, size: size),
     );
+  }
+
+  /// ลบ thumbnail ทุกขนาดของ [sourcePath] (ทั้งในแคชหน่วยความจำและไฟล์)
+  /// ไฟล์ที่ไม่มีอยู่หรือลบไม่ได้จะถูกข้าม
+  static Future<void> deleteFor(String sourcePath) async {
+    _cache.removeWhere((key, _) => key.startsWith('$sourcePath|'));
+    try {
+      final thumbDir = Directory(
+        '${(await getTemporaryDirectory()).path}/medicine_thumbnails',
+      );
+      if (!await thumbDir.exists()) return;
+      final prefix = '${base64Url.encode(utf8.encode(sourcePath))}-';
+      await for (final entity in thumbDir.list()) {
+        final name = entity.uri.pathSegments.last;
+        if (entity is File && name.startsWith(prefix)) {
+          try {
+            await entity.delete();
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
   }
 
   static Future<String?> _createThumbnail(
@@ -37,13 +68,15 @@ class ThumbnailCacheService {
     final outputFile = File(outputPath);
     if (await outputFile.exists()) return outputPath;
 
-    return compute(
-      _generateThumbnail,
-      <String, dynamic>{
-        'sourcePath': sourcePath,
-        'outputPath': outputPath,
-        'size': size,
-      },
+    return _enqueue(
+      () => compute(
+        _generateThumbnail,
+        <String, dynamic>{
+          'sourcePath': sourcePath,
+          'outputPath': outputPath,
+          'size': size,
+        },
+      ),
     );
   }
 }

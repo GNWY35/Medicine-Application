@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../models/med_item.dart';
@@ -17,37 +16,6 @@ class MedDetailSheet extends StatefulWidget {
 }
 
 class _MedDetailSheetState extends State<MedDetailSheet> {
-  final FlutterTts _tts = FlutterTts();
-  bool _speaking = false;
-
-  Future<void> _speak() async {
-    if (_speaking) {
-      await _tts.stop();
-      setState(() => _speaking = false);
-      return;
-    }
-
-    await _tts.setLanguage('th-TH');
-    await _tts.setSpeechRate(0.47);
-    await _tts.setPitch(1.0);
-    _tts.setCompletionHandler(() {
-      if (!mounted) return;
-      setState(() => _speaking = false);
-    });
-
-    final text =
-        '${widget.item.name}. ${widget.item.description.isEmpty ? "ไม่มีสรรพคุณ" : widget.item.description}';
-
-    setState(() => _speaking = true);
-    await _tts.speak(text);
-  }
-
-  @override
-  void dispose() {
-    _tts.stop();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -78,7 +46,6 @@ class _MedDetailSheetState extends State<MedDetailSheet> {
                       width: double.infinity,
                       height: double.infinity,
                       cacheWidth: 800,
-                      cacheHeight: 800,
                       errorBuilder: (_, __, ___) => Container(
                         alignment: Alignment.center,
                         color: const Color(0xFF10B981).withValues(alpha: 0.08),
@@ -195,41 +162,6 @@ class _MedDetailSheetState extends State<MedDetailSheet> {
                   fontWeight: FontWeight.w400,
                   color: const Color(0xFF374151),
                   height: 1.6,
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF059669), Color(0xFF10B981)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF10B981).withValues(alpha: 0.4),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: FilledButton.icon(
-                onPressed: _speak,
-                icon: Icon(
-                  _speaking
-                      ? Icons.stop_circle_rounded
-                      : Icons.volume_up_rounded,
-                ),
-                label: Text(
-                  _speaking ? 'หยุดอ่าน' : 'อ่านออกเสียง',
-                  style: GoogleFonts.kanit(fontWeight: FontWeight.w600),
-                ),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.transparent,
-                  shadowColor: Colors.transparent,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
             ),

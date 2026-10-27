@@ -53,8 +53,8 @@ class MedicineGridCard extends StatelessWidget {
                     fit: BoxFit.cover,
                     width: double.infinity,
                     height: double.infinity,
-                    cacheWidth: 500, // ปรับตรงนี้ ขนาดรูปย่อของยาในหน้าแรก
-                    cacheHeight: 300, // ปรับตรงนี้ ขนาดรูปย่อของยาในหน้าแรก - ในกรณีเปลี่ยนรูปใหม่ แล้วขนาดเปลี่ยนไป อาจจะทำให้ดูไม่สวยให้ปรับตรงนี้
+                    // กำหนดแค่ความกว้าง เพื่อคงสัดส่วนรูปเดิม (ไม่บีบภาพ)
+                    cacheWidth: 500,
                     errorBuilder: (_, __, ___) => const Center(
                       child: Icon(
                         Icons.eco_outlined,

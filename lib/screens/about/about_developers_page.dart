@@ -45,7 +45,7 @@ class AboutDevelopersPage extends StatelessWidget {
             const SizedBox(height: 16),
             Center(
               child: Text(
-                'MyMedicine',
+                'Medi-Ident AI',
                 style: GoogleFonts.kanit(
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
